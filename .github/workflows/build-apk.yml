@@ -1,1 +1,64 @@
+name: Build APK from ZIP
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Find project (extract ZIP if needed)
+        id: prep
+        run: |
+          set -e
+          if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          else
+            ZIP=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -i '\.zip$' | head -n 1 || true)
+            if [ -z "$ZIP" ]; then ZIP=$(ls -t ./*.zip 2>/dev/null | head -n 1 || true); fi
+            if [ -z "$ZIP" ]; then echo "No project or .zip file found in the repo"; exit 1; fi
+            echo "Using ZIP: $ZIP"
+            mkdir -p "$RUNNER_TEMP/proj"
+            unzip -q -o "$ZIP" -d "$RUNNER_TEMP/proj"
+            S=$(find "$RUNNER_TEMP/proj" -name settings.gradle.kts -not -path '*/__MACOSX/*' | head -n 1)
+            if [ -z "$S" ]; then echo "settings.gradle.kts not found inside the ZIP"; exit 1; fi
+            echo "dir=$(dirname "$S")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build debug APK
+        working-directory: ${{ steps.prep.outputs.dir }}
+        run: gradle assembleDebug --no-daemon
+
+      - name: Collect APK
+        run: cp "${{ steps.prep.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk" "$RUNNER_TEMP/PMSPrep.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PMSPrep-debug-apk
+          path: ${{ runner.temp }}/PMSPrep.apk
+
+      - name: Publish APK to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" "$RUNNER_TEMP/PMSPrep.apk" \
+            --title "PMS APK #${{ github.run_number }}" \
+            --notes "Auto-built from commit ${{ github.sha }}"
