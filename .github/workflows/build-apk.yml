@@ -34,6 +34,28 @@ jobs:
             echo "dir=$(dirname "$S")" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Convert topic files (.docx) into app data
+        env:
+          PROJ: ${{ steps.prep.outputs.dir }}
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/topic_docs"
+          find "$GITHUB_WORKSPACE" -name '*.docx' -not -path '*/.git/*' -exec cp {} "$RUNNER_TEMP/topic_docs/" \;
+          if ls "$RUNNER_TEMP"/topic_docs/*.docx >/dev/null 2>&1; then
+            if [ ! -f "$PROJ/tools/build_content.py" ]; then
+              echo "::error::tools/build_content.py is missing. Upload the latest PMSPrep.zip."
+              exit 1
+            fi
+            python -m pip install --quiet python-docx
+            python "$PROJ/tools/build_content.py" "$RUNNER_TEMP/topic_docs"
+          else
+            echo "No .docx topic files in the repo; building with the data already in the project."
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
